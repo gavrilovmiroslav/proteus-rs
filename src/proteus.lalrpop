@@ -1,0 +1,124 @@
+use std::str::FromStr;
+use crate::ast::*;
+
+grammar;
+
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => { v.push(e); v }
+    }
+};
+
+pub TopLevel: TopLevelExpr = {
+    "actor" <n:Ident> "{" <a:Actor*> "}" ";"? => TopLevelExpr::Actor { actor_name: n, content: a },
+    "event" <n:Ident> "(" <ts:Comma<Type>> ")" ";" => TopLevelExpr::Event { event_name: n, params: ts },
+    "func" <n:Ident> "(" <p:Params> ")" "{" <body:ControlFlow*> "}" ";"? => TopLevelExpr::Func { func_name: n, params: p, ret_type: None, body },
+    "func" <n:Ident> "(" <p:Params> ")" "->" <r:Type> "{" <body:ControlFlow*> "}" ";"? => TopLevelExpr::Func { func_name: n, params: p, ret_type: Some(r), body },
+};
+
+Param: (String, VarType) = <t:Type> <i:Ident> => (i, t);
+
+Params = Comma<(Param)>;
+
+Type: VarType = {
+    "int" => VarType::IntType,
+    "bool" => VarType::BoolType,
+    "float" => VarType::FloatType,
+    "string" => VarType::StringType,
+};
+
+Actor: ActorExpr = {
+    <t:Type> <l:Ident> "=" <r:Expr> ";" => ActorExpr::VarDecl{ var_name: l, var_type: t, initial: Some(r) },
+    "statemachine" "{" <s:StateMachine*> "}" => ActorExpr::StateMachine(s),
+    "on" <e:FuncCall> "goto" <i:Ident> "{" <flow:ControlFlow*> "}" ";"? => ActorExpr::TransitionDecl { event: e, conditions: vec![], target: i, body: flow },
+    "on" <e:FuncCall> "when" <w:Comma<Expr>> "goto" <i:Ident> "{" <flow:ControlFlow*> "}" ";"? => ActorExpr::TransitionDecl { event: e, conditions: w, target: i, body: flow },
+    "entry" "{" <flow:ControlFlow*> "}" ";"? => ActorExpr::EntryDecl(flow),
+    "exit" "{" <flow:ControlFlow*> "}" ";"? => ActorExpr::ExitDecl(flow),
+};
+
+pub StateMachine: StateMachineExpr = {
+    <t:Type> <l:Ident> "=" <r:Expr> ";" => StateMachineExpr::VarDecl{ var_name: l, var_type: t, initial: Some(r) },
+    "initial" <i:Ident> ";" => StateMachineExpr::InitialStateDecl(i),
+    "state" <name:Ident> "{" <content:StateMachine*> "}" ";"? => StateMachineExpr::StateDecl { state_name: name, content },
+    "on" <e:FuncCall> "goto" <i:Ident> "{" <flow:ControlFlow*> "}" ";"? => StateMachineExpr::TransitionDecl { event: e, conditions: vec![], target: i, body: flow },
+    "on" <e:FuncCall> "when" <w:Comma<Expr>> "goto" <i:Ident> "{" <flow:ControlFlow*> "}" ";"? => StateMachineExpr::TransitionDecl { event: e, conditions: w, target: i, body: flow },
+    "entry" "{" <flow:ControlFlow*> "}" ";"? => StateMachineExpr::EntryDecl(flow),
+    "exit" "{" <flow:ControlFlow*> "}" ";"? => StateMachineExpr::ExitDecl(flow),
+};
+
+pub ControlFlow: ControlFlowExpr = {
+    <t:Type> <l:Ident> "=" <r:Expr> ";" => ControlFlowExpr::VarDecl{ var_name: l, var_type: t, initial: Some(r) },
+    <t:Ident> "!" <e:FuncCall> ";" => ControlFlowExpr::SendStatement { target_state: t, event: e },
+    <l:Ident> "=" <r:Expr> ";" => ControlFlowExpr::AssignStatement { var_name: l, val_expr: r },
+    <f:FuncCall> ";" => ControlFlowExpr::FuncCallStatement(f),
+};
+
+pub Expr: ValueExpr = {
+    Rel,
+};
+
+Rel: ValueExpr = {
+    <l:Rel> "==" <r:Term> => ValueExpr::EqExpr{ l: Box::new(l), r: Box::new(r) },
+    <l:Rel> "!=" <r:Term> => ValueExpr::NeqExpr{ l: Box::new(l), r: Box::new(r) },
+    <l:Rel> "<=" <r:Term> => ValueExpr::LeqExpr{ l: Box::new(l), r: Box::new(r) },
+    <l:Rel> ">=" <r:Term> => ValueExpr::GeqExpr{ l: Box::new(l), r: Box::new(r) },
+    <l:Rel> "<" <r:Term> => ValueExpr::LtExpr{ l: Box::new(l), r: Box::new(r) },
+    <l:Rel> ">" <r:Term> => ValueExpr::GtExpr{ l: Box::new(l), r: Box::new(r) },
+    Term,
+};
+
+Term: ValueExpr = {
+    <l:Term> "+" <r:Factor> => ValueExpr::AddExpr{ l: Box::new(l), r: Box::new(r) },
+    <l:Term> "-" <r:Factor> => ValueExpr::SubExpr{ l: Box::new(l), r: Box::new(r) },
+    Factor,
+};
+
+Factor: ValueExpr = {
+    <l:Factor> "*" <r:Bit> => ValueExpr::MulExpr{ l: Box::new(l), r: Box::new(r) },
+    <l:Factor> "/" <r:Bit> => ValueExpr::DivExpr{ l: Box::new(l), r: Box::new(r) },
+    Bit,
+};
+
+Bit: ValueExpr = {
+    "!" <l:Pure> => ValueExpr::NotExpr{ v: Box::new(l) },
+    <l:Bit> "&&" <r:Pure> => ValueExpr::AndExpr{ l: Box::new(l), r: Box::new(r) },
+    <l:Bit> "||" <r:Pure> => ValueExpr::OrExpr{ l: Box::new(l), r: Box::new(r) },
+    <l:Bit> "^^" <r:Pure> => ValueExpr::XorExpr{ l: Box::new(l), r: Box::new(r) },
+    Pure,
+};
+
+Pure: ValueExpr = {
+    Boolean => ValueExpr::Bool(<>),
+    Float => ValueExpr::Float(<>),
+    Int => ValueExpr::Int(<>),
+    Str => ValueExpr::Str(<>),
+    FuncCall => <>,
+    Ident => ValueExpr::Ident(<>),
+    "(" <Expr> ")",
+};
+
+FuncCall: ValueExpr = {
+    <n:Ident> "(" <a:Comma<Expr>> ")" => ValueExpr::FuncCallExpr { func_name: n, func_args: a },
+};
+
+Boolean: bool = {
+    "true" => true,
+    "false" => false,
+}
+
+Float: f64 = {
+    r"[0-9]+\.[0-9]+" => f64::from_str(<>).unwrap(),
+};
+
+Int: i64 = {
+    r"[0-9]+" => i64::from_str(<>).unwrap(),
+};
+
+Str: String = {
+    r#""[^"]*""# => { let s = <>; format!("{}", &s[1..s.len() - 1]) },
+}
+
+Ident: String = {
+    r"[a-zA-Z][_a-zA-Z0-9]*" => format!("{}", <>)
+};

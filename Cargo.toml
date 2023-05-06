@@ -1,0 +1,13 @@
+[package]
+name = "proteus-rs"
+version = "0.1.1"
+edition = "2021"
+
+[build-dependencies]
+lalrpop = { version = "0.19.9" }
+
+[dependencies]
+lalrpop-util = {version = "0.19", features = ["lexer"]}
+
+[features]
+api_version = []
