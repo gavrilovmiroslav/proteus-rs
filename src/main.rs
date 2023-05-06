@@ -14,4 +14,5 @@ fn main() {
     println!("{:?}", proteus::TopLevelParser::new().parse("event PowerOn();"));
     println!("{:?}", proteus::TopLevelParser::new().parse("event Capture(int);"));
     println!("{:?}", proteus::TopLevelParser::new().parse("func add(int x, int y) -> int {}"));
+    println!("{:?}", proteus::ProgramParser::new().parse("event PowerOn(); event PowerOff(); actor Lights {};"))
 }

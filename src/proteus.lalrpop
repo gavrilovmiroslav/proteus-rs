@@ -10,6 +10,8 @@ Comma<T>: Vec<T> = {
     }
 };
 
+pub Program: Vec<TopLevelExpr> = <tl:TopLevel*> => tl;
+
 pub TopLevel: TopLevelExpr = {
     "actor" <n:Ident> "{" <a:Actor*> "}" ";"? => TopLevelExpr::Actor { actor_name: n, content: a },
     "event" <n:Ident> "(" <ts:Comma<Type>> ")" ";" => TopLevelExpr::Event { event_name: n, params: ts },
