@@ -1,10 +1,17 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
+use std::sync::Mutex;
 use lockfree::queue::Queue;
 use multimap::MultiMap;
-use crate::ast::{ActorExpr, ControlFlowExpr, Program, StateMachineExpr, TopLevelExpr, ValueExpr, VarType};
-use crate::proteus;
+use serial_int::SerialGenerator;
+use crate::ast::*;
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref ID_GEN: Mutex<SerialGenerator>
+        = Mutex::new(SerialGenerator::new());
+}
 
 #[derive(Debug)]
 pub enum Value {
@@ -44,11 +51,34 @@ pub trait Environment {
     fn get_var(&mut self, name: String) -> Option<&(VarType, Value)>;
 }
 
+/* FUNCTIONS */
+
+#[derive(Debug)]
+#[derive(Default)]
+pub struct FuncSignature {
+    pub func_name: String,
+    pub params: Vec<(String, VarType)>,
+    pub ret_type: Option<VarType>,
+    pub body: Vec<ControlFlowExpr>,
+}
+
+impl FuncSignature {
+    pub fn new(func_name: String, params: Vec<(String, VarType)>, ret_type: Option<VarType>, body: Vec<ControlFlowExpr>) -> Self {
+        FuncSignature {
+            func_name,
+            params,
+            ret_type,
+            body
+        }
+    }
+}
+
 /* ACTORS */
 
 #[derive(Debug)]
 #[derive(Default)]
 pub struct Actor {
+    pub id: u32,
     pub name: String,
     pub queue: Queue<EventInstance>,
     pub env: HashMap<String, (VarType, Value)>,
@@ -123,6 +153,7 @@ impl Transition {
 #[derive(Debug)]
 #[derive(Default)]
 pub struct State {
+    pub id: u32,
     pub name: String,
     pub at: String,
     pub env: HashMap<String, (VarType, Value)>,
@@ -142,6 +173,9 @@ impl Environment for State {
 
 /* TOP LEVEL */
 
+use lalrpop_util::lalrpop_mod;
+lalrpop_mod!(pub proteus);
+
 #[derive(Debug)]
 #[derive(Default)]
 pub struct EvalEngine {
@@ -157,7 +191,7 @@ impl EvalEngine {
         match proteus::ProgramParser::new().parse(&content) {
             Ok(ast) => {
                 let unit = eval_program(name, ast);
-                self.units.insert("".to_string(), unit);
+                self.units.insert("ROOT".to_string(), unit);
                 Ok(())
             }
 
@@ -176,6 +210,14 @@ impl EvalEngine {
             Err(err) => Err(format!("{:?}", err))
         }
     }
+
+    fn typecheck(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn compile(&mut self) -> Result<(), String> {
+        self.typecheck()
+    }
 }
 
 #[derive(Debug)]
@@ -184,7 +226,7 @@ pub struct InterpretationUnit {
     pub name: String,
     pub actors: HashMap<String, Actor>,
     pub events: HashMap<String, EventSignature>,
-    pub funcs: HashMap<String, ()>,
+    pub funcs: HashMap<String, FuncSignature>,
 }
 
 impl InterpretationUnit {
@@ -210,6 +252,7 @@ pub fn eval_pure(val: ValueExpr) -> Option<Value> {
 
 pub fn eval_actor(name: String, content: Vec<ActorExpr>) -> Actor {
     let mut actor = Actor::default();
+    actor.id = ID_GEN.lock().unwrap().generate();
     actor.name = name.clone();
     for e in content {
         match e {
@@ -218,8 +261,9 @@ pub fn eval_actor(name: String, content: Vec<ActorExpr>) -> Actor {
             }
 
             ActorExpr::StateMachine(sm) => {
-                actor.statemachine = Some(State::default());
-                eval_state(&String::default(), &mut actor.statemachine, sm);
+                let mut statemachine = Option::Some(State::default());
+                eval_state(&actor.name, &mut statemachine, sm);
+                actor.statemachine = statemachine;
             }
 
             ActorExpr::TransitionDecl { event, conditions, body } => {
@@ -255,9 +299,10 @@ pub fn eval_actor(name: String, content: Vec<ActorExpr>) -> Actor {
     actor
 }
 
-pub fn eval_state(name: &String, state: &mut Option<State>, sm: Vec<StateMachineExpr>) {
+pub fn eval_state(name: &str, state: &mut Option<State>, sm: Vec<StateMachineExpr>) {
     state.as_mut().map(|state| {
-        state.name = name.clone();
+        state.id = ID_GEN.lock().unwrap().generate();
+        state.name = name.to_string();
 
         for e in sm {
             match e {
@@ -319,7 +364,7 @@ pub fn eval_program(name: String, program: Program) -> InterpretationUnit {
             }
 
             TopLevelExpr::Func { func_name, params, ret_type, body } => {
-                unit.funcs.insert(func_name.clone(), ());
+                unit.funcs.insert(func_name.clone(), FuncSignature::new(func_name, params, ret_type, body));
             }
         }
     }

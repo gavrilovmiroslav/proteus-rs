@@ -34,7 +34,7 @@ StateMachine
      | "state" Ident "{" StateMachine* "}" ";"? 
      | "on" FuncCall "{" ControlFlow* "}" ";"? 
      | "on" FuncCall "goto" Ident "{" ControlFlow* "}" ";"? 
-     | "on" FuncCall "if" Comma<Expr> "goto" Ident "{" ControlFlow* "}" ";"? 
+     | "on" FuncCall "goto" Ident "if" Comma<Expr> "{" ControlFlow* "}" ";"?
      | "entry" "{" ControlFlow* "}" ";"? 
      | "exit" "{" ControlFlow* "}" ";"?
 

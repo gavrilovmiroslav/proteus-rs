@@ -43,9 +43,10 @@ pub StateMachine: StateMachineExpr = {
     <t:Type> <l:Ident> "=" <r:Expr> ";" => StateMachineExpr::VarDecl{ var_name: l, var_type: t, initial: Some(r) },
     "initial" <i:Ident> ";" => StateMachineExpr::InitialStateDecl(i),
     "state" <name:Ident> "{" <content:StateMachine*> "}" ";"? => StateMachineExpr::StateDecl { state_name: name, content },
-    "on" <e:FuncCall> "{" <flow:ControlFlow*> "}" ";"? => StateMachineExpr::TransitionDecl { event: e, conditions: vec![], target: "".to_string(), body: flow },
+    "on" <e:FuncCall> "stay" "{" <flow:ControlFlow*> "}" ";"? => StateMachineExpr::TransitionDecl { event: e, conditions: vec![], target: "".to_string(), body: flow },
+    "on" <e:FuncCall> "goto" <i:Ident> ";" => StateMachineExpr::TransitionDecl { event: e, conditions: vec![], target: i, body: vec![] },
     "on" <e:FuncCall> "goto" <i:Ident> "{" <flow:ControlFlow*> "}" ";"? => StateMachineExpr::TransitionDecl { event: e, conditions: vec![], target: i, body: flow },
-    "on" <e:FuncCall> "if" <w:Comma<Expr>> "goto" <i:Ident> "{" <flow:ControlFlow*> "}" ";"? => StateMachineExpr::TransitionDecl { event: e, conditions: w, target: i, body: flow },
+    "on" <e:FuncCall> "goto" <i:Ident> "if" <w:Comma<Expr>> "{" <flow:ControlFlow*> "}" ";"? => StateMachineExpr::TransitionDecl { event: e, conditions: w, target: i, body: flow },
     "entry" "{" <flow:ControlFlow*> "}" ";"? => StateMachineExpr::EntryDecl(flow),
     "exit" "{" <flow:ControlFlow*> "}" ";"? => StateMachineExpr::ExitDecl(flow),
 };
