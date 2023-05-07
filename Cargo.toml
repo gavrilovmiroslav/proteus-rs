@@ -8,6 +8,8 @@ lalrpop = { version = "0.19.9" }
 
 [dependencies]
 lalrpop-util = {version = "0.19", features = ["lexer"]}
+lockfree = "0.5.1"
+multimap = "0.9.0"
 
 [features]
 api_version = []

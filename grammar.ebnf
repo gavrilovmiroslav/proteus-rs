@@ -1,0 +1,103 @@
+
+Program
+    := TopLevel*
+
+TopLevel
+    := "actor" Ident "{" Actor* "}" ";"?
+     | "event" Ident "(" Comma<Type> ")" ";"
+     | "func" Ident "(" Params ")" "{" ControlFlow* "}" ";"?
+     | "func" Ident "(" Params ")" "->" Type "{" ControlFlow* "}" ";"?
+
+Param 
+    := Type Ident
+
+Params 
+    := Comma<Param>
+
+Type 
+    := "int"
+     | "bool"
+     | "float"
+     | "string"
+
+Actor 
+    := Type Ident "=" Expr ";"
+     | "statemachine" "{" StateMachine* "}" ";"?
+     | "on" FuncCall "{" ControlFlow* "}" ";"?
+     | "on" FuncCall "if" Comma<Expr> "{" ControlFlow* "}" ";"?
+     | "entry" "{" ControlFlow* "}" ";"?
+     | "exit" "{" ControlFlow* "}" ";"?
+
+StateMachine
+    := Type Ident "=" Expr ";" 
+     | "initial" Ident ";" 
+     | "state" Ident "{" StateMachine* "}" ";"? 
+     | "on" FuncCall "{" ControlFlow* "}" ";"? 
+     | "on" FuncCall "goto" Ident "{" ControlFlow* "}" ";"? 
+     | "on" FuncCall "if" Comma<Expr> "goto" Ident "{" ControlFlow* "}" ";"? 
+     | "entry" "{" ControlFlow* "}" ";"? 
+     | "exit" "{" ControlFlow* "}" ";"?
+
+ControlFlow
+    := Type Ident "=" Expr ";"
+     | Ident "!" FuncCall ";"
+     | Ident "=" Expr ";"
+     | FuncCall ";"
+
+Expr
+    := Rel
+
+Rel
+    := Rel "==" Term
+     | Rel "!=" Term
+     | Rel "<=" Term
+     | Rel ">=" Term
+     | Rel "<"  Term
+     | Rel ">"  Term
+     | Term
+
+Term
+    := Term "+" Factor
+     | Term "-" Factor
+     | Factor
+
+Factor
+    := Factor "*" Bit
+     | Factor "/" Bit
+     | Bit
+
+Bit
+    := "!" Pure
+     | Bit "&&" Pure
+     | Bit "||" Pure
+     | Bit "^^" Pure
+     | Pure
+
+Pure
+    := Boolean
+     | Float
+     | Int
+     | Str
+     | FuncCall
+     | Ident
+     | "(" Expr ")"
+
+FuncCall
+    := Ident "(" Comma<Expr> ")"
+
+Boolean
+    := "true"
+     | "false"
+
+Float
+    := r"[0-9]+\.[0-9]+"
+
+Int
+    := r"[0-9]+"
+};
+
+Str
+    := r#""[^"]*""#
+
+Ident
+    := r"[a-zA-Z][_a-zA-Z0-9]*"

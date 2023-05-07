@@ -7,6 +7,8 @@ pub enum VarType {
     StringType,
 }
 
+pub type Program = Vec<TopLevelExpr>;
+
 #[derive(Debug)]
 pub enum TopLevelExpr {
     Actor { actor_name: String, content: Vec<ActorExpr> },
@@ -18,7 +20,7 @@ pub enum TopLevelExpr {
 pub enum ActorExpr {
     VarDecl { var_name: String, var_type: VarType, initial: Option<ValueExpr> },
     StateMachine(Vec<StateMachineExpr>),
-    TransitionDecl { event: ValueExpr, conditions: Vec<ValueExpr>, target: String, body: Vec<ControlFlowExpr> },
+    TransitionDecl { event: ValueExpr, conditions: Vec<ValueExpr>, body: Vec<ControlFlowExpr> },
     EntryDecl(Vec<ControlFlowExpr>),
     ExitDecl(Vec<ControlFlowExpr>),
 }
