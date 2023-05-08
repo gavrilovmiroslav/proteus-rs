@@ -8,6 +8,7 @@ use egui::epaint::CubicBezierShape;
 use crate::emath::Align2;
 use crate::eval::{eval_program, EvalEngine};
 use std::default::Default;
+use egui::Event::PointerButton;
 
 fn main() {
     let mut engine = EvalEngine::default();
@@ -28,6 +29,7 @@ fn main() {
 #[derive(Debug)]
 #[derive(Default)]
 pub struct Node {
+    pub id: usize,
     pub config: NodeConfig,
     pub sub_nodes: Vec<Node>,
 }
@@ -44,25 +46,29 @@ pub struct NodeConfig {
 
 #[derive(Debug)]
 struct ProteusApp {
-    node: Node,
+    node_count: usize,
+    state: EditorState,
+    nodes: Vec<Node>,
     timer: delta::Timer,
     delta: f64,
     time: f64,
 }
 
+#[derive(Debug)]
+#[derive(Default)]
+struct EditorState {
+    node_rects: std::collections::HashMap<usize, Rect>,
+    connecting: Option<usize>,
+}
+
 impl ProteusApp {
     pub fn new() -> ProteusApp {
         let mut app = ProteusApp {
+            node_count: 0,
+            state: EditorState::default(),
             timer: delta::Timer::new(),
             delta: 0.0f64,
-            node: Node {
-                config: NodeConfig {
-                    pos: Pos2::new(300.0, 300.0),
-                    size: Vec2::new(300.0, 250.0),
-                    ..Default::default()
-                },
-                sub_nodes: vec![]
-            },
+            nodes: vec![],
             time: 0.0,
         };
 
@@ -70,7 +76,7 @@ impl ProteusApp {
     }
 }
 
-fn draw_port(ui: &mut Ui, port_pos: Pos2, transient: bool, time: f64) {
+fn draw_port(ui: &mut Ui, port_pos: Pos2, transient: bool) {
     let port_rect = Rect::from_center_size(port_pos, egui::vec2(10.0, 10.0));
 
     let close_enough = transient && if let Some(pointer_pos) = ui.ctx().pointer_hover_pos() {
@@ -100,13 +106,18 @@ fn draw_connection(painter: &Painter, src_pos: Pos2, dst_pos: Pos2, color: Color
     painter.add(bezier);
 }
 
-fn draw_node(ui: &mut Ui, node: &mut Node, time: f64, parent_pos: Pos2) {
+fn draw_node(ui: &mut Ui, node: &mut Node, time: f64, parent_pos: Pos2, node_count: &mut usize, editor_state: &mut EditorState) {
     let rect = Rect::from_min_size(parent_pos + node.config.pos.to_vec2(), node.config.size);
 
     let mut response = ui.allocate_rect(rect,
                                         egui::Sense::click_and_drag()
                                                 .union(egui::Sense::hover())
                                                 .union(egui::Sense::click()));
+
+    let internal_hover = if let Some(pointer_pos) = ui.ctx().pointer_hover_pos() {
+        !node.config.dragged && !node.config.resizing &&
+            Rect::from_min_size(rect.min + Vec2::new(5.0, 27.0), rect.size() - Vec2::new(5.0, 32.0)).contains(pointer_pos)
+    } else { false };
 
     let edge_hovered = if let Some(pointer_pos) = ui.ctx().pointer_hover_pos() {
         !node.config.dragged && !node.config.resizing &&
@@ -120,8 +131,29 @@ fn draw_node(ui: &mut Ui, node: &mut Node, time: f64, parent_pos: Pos2) {
             rect.expand(2.0).contains(pointer_pos) && !rect.shrink(15.0).contains(pointer_pos)
     } else { false };
 
-    if node.config.dragged
-    {
+    if editor_state.connecting.is_some() {
+        if response.drag_released_by(egui::PointerButton::Primary) {
+            println!("DRAG RELEASED!");
+            if let Some(start) = editor_state.connecting {
+                println!("START: {}!", start);
+                if let Some(pointer_pos) = ui.ctx().pointer_hover_pos() {
+                    println!("POINTER AT: {:?}!", pointer_pos);
+                    println!("NODES: {}", editor_state.node_rects.len());
+                    for (node_id, node_rect) in &editor_state.node_rects {
+                        println!("{} -> {:?}", node_id, node_rect);
+                        let edge = Rect::from_min_size(node_rect.min, Vec2::new(node_rect.width(), 5.0)).contains(pointer_pos) ||
+                            node_rect.expand(2.0).contains(pointer_pos) && !node_rect.shrink(3.0).contains(pointer_pos);
+
+                        if edge {
+                            println!("Started connection on node #{}, ended on node #{}", start, node_id);
+                            editor_state.connecting = None;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    } else if node.config.dragged {
         if let Some(latest_pos) = ui.ctx().pointer_latest_pos() {
             if let Some(last_drag) = node.config.last_drag_position {
                 let delta = latest_pos - last_drag;
@@ -135,6 +167,7 @@ fn draw_node(ui: &mut Ui, node: &mut Node, time: f64, parent_pos: Pos2) {
         if response.drag_released_by(egui::PointerButton::Primary) {
             node.config.dragged = false;
             node.config.last_drag_position = None;
+            editor_state.node_rects.insert(node.id, rect);
         }
     }
     else if node.config.resizing
@@ -157,6 +190,7 @@ fn draw_node(ui: &mut Ui, node: &mut Node, time: f64, parent_pos: Pos2) {
         if response.drag_released_by(egui::PointerButton::Primary) {
             node.config.resizing = false;
             node.config.last_drag_position = None;
+            editor_state.node_rects.insert(node.id, rect);
         }
     } else {
         let close_enough_to_resize = if let Some(pointer_pos) = ui.ctx().pointer_hover_pos() {
@@ -176,8 +210,8 @@ fn draw_node(ui: &mut Ui, node: &mut Node, time: f64, parent_pos: Pos2) {
         } else if close_enough_to_resize && !edge_hovered {
             node.config.resizing = close_enough_to_resize && response.drag_started_by(egui::PointerButton::Primary);
             node.config.dragged = false;
-        } else {
-            // connection
+        } else if response.drag_started_by(egui::PointerButton::Primary) {
+            editor_state.connecting = Option::Some(node.id);
         }
     }
 
@@ -225,27 +259,33 @@ fn draw_node(ui: &mut Ui, node: &mut Node, time: f64, parent_pos: Pos2) {
     }
 
     ui.painter().text(rect.left_top() + Vec2::new(10.0, 5.0), Align2::LEFT_TOP,
-                 "Node Name", egui::FontId::new(14.0,egui::FontFamily::Proportional),
+                 format!("Node #{}", node.id), egui::FontId::new(14.0,egui::FontFamily::Proportional),
                       egui::Color32::GRAY,);
 
     if !node.config.dragged && !node.config.resizing && edge_hovered {
         if let Some(pointer_pos) = ui.ctx().pointer_hover_pos() {
-            draw_port(ui, pointer_pos, true, time);
+            draw_port(ui, pointer_pos, true);
         }
-    } else if !node.config.dragged && !node.config.resizing && !edge_hovered {
+    } else if internal_hover {
         if response.double_clicked_by(egui::PointerButton::Primary) {
-            node.sub_nodes.push(Node { config: NodeConfig {
-                pos: response.hover_pos().unwrap(),
-                size: Vec2::new(200.0, 150.0),
-                dragged: false,
-                resizing: false,
-                last_drag_position: None
-            }, sub_nodes: vec![] })
+            *node_count += 1;
+            let next_pos = (response.hover_pos().unwrap() - parent_pos - node.config.pos.to_vec2()).to_pos2();
+            let next_size = Vec2::new(200.0, 150.0);
+            let id = *node_count;
+            let sub_node = Node {
+                id: *node_count,
+                config: NodeConfig {
+                    pos: next_pos,
+                    size: next_size,
+                    ..Default::default()
+                }, sub_nodes: vec![] };
+            node.sub_nodes.push(sub_node);
+            editor_state.node_rects.insert(id, Rect::from_min_size(next_pos, next_size));
         }
     }
 
     for sub in &mut node.sub_nodes {
-        draw_node(ui, sub, time, parent_pos + node.config.pos.to_vec2());
+        draw_node(ui, sub, time, parent_pos + node.config.pos.to_vec2(), node_count, editor_state);
     }
 }
 
@@ -255,8 +295,33 @@ impl eframe::App for ProteusApp {
         self.time += self.delta;
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            let response = ui.allocate_response(ui.available_size(), Sense::click());
+            if response.double_clicked()
+            {
+                if let Some(pos) = response.hover_pos() {
+                    self.node_count += 1;
+                    let id = self.node_count;
+                    let size = Vec2::new(300.0, 250.0);
+                    let sub_node = Node {
+                        id: self.node_count,
+                        config: NodeConfig {
+                            pos,
+                            size,
+                            ..Default::default()
+                        },
+                        sub_nodes: vec![]
+                    };
+
+                    self.nodes.push(sub_node);
+                    self.state.node_rects.insert(id, Rect::from_min_size(pos, size));
+                }
+            }
+
             ui.painter().rect_filled(ctx.screen_rect(), 0.0, Color32::BLACK);
-            draw_node(ui, &mut self.node, self.time, Pos2::ZERO);
+
+            for node in &mut self.nodes {
+                draw_node(ui, node, self.time, Pos2::ZERO, &mut self.node_count, &mut self.state);
+            }
         });
     }
 }
