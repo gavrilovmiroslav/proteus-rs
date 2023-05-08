@@ -16,6 +16,7 @@ egui = "0.21.0"
 eframe = "0.21.3"
 egui_graph = "0.1.0"
 egui_node_graph = "0.4.0"
+delta = "0.2.1"
 
 [features]
 api_version = []
