@@ -46,6 +46,7 @@ pub struct Node {
 pub struct NodeConfig {
     pub pos: Pos2,
     pub size: Vec2,
+    pub parent: Option<usize>,
     pub dragged: bool,
     pub resizing: bool,
     pub last_drag_position: Option<Pos2>,
@@ -122,7 +123,20 @@ fn draw_link(ui: &mut Ui, src: &PortId, dst: &PortId, color: Color32, state: &Ed
 
     let src_pos = src_node.pos + state.node_rects.get(&src_node.node).unwrap().min.to_vec2();
     let dst_pos = dst_node.pos + state.node_rects.get(&dst_node.node).unwrap().min.to_vec2();
+
     draw_connection(ui, src_pos, dst_pos, color);
+    draw_port(ui, src_pos, false);
+    draw_port(ui, dst_pos, false);
+}
+
+fn find_node_position(node: &Node, editor_state: &EditorState) -> Pos2 {
+    let mut pos = node.config.pos;
+
+    if let Some(parent) = node.config.parent {
+        pos += find_node_position(editor_state.nodes.get(&parent).unwrap(), editor_state).to_vec2();
+    }
+
+    pos
 }
 
 fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_count: &mut usize, editor_state: &mut EditorState) {
@@ -164,10 +178,13 @@ fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_cou
     if editor_state.connecting.is_some() {
         if response.drag_released_by(egui::PointerButton::Primary) {
             if let Some((start, port_pos)) = editor_state.connecting {
+
                 if let Some(pointer_pos) = ui.ctx().pointer_hover_pos() {
-                    for (node_id, node_rect) in &editor_state.node_rects {
-                        let edge = Rect::from_min_size(node_rect.min, Vec2::new(node_rect.width(), 5.0)).contains(pointer_pos) ||
-                            node_rect.expand(2.0).contains(pointer_pos) && !node_rect.shrink(3.0).contains(pointer_pos);
+                    for (node_id, some_node) in &editor_state.nodes {
+                        let window_pos = find_node_position(some_node, editor_state);
+                        let node_rect = Rect::from_min_size(window_pos, some_node.config.size);
+                        let edge = node_rect.expand(5.0).contains(pointer_pos)
+                            && !node_rect.shrink(5.0).contains(pointer_pos);
 
                         if edge {
                             println!("Started connection on node #{}, ended on node #{}", start, node_id);
@@ -185,10 +202,10 @@ fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_cou
                             editor_state.connections.push((first_port_id, second_port_id));
                             editor_state.connecting = None;
                             break;
-                        }
+                        } else { println!("Edge not detected"); }
                     }
-                }
-            }
+                } else { println!("No hover position"); }
+            } else { println!("Editor not connecting"); }
 
             editor_state.connecting = None;
         }
@@ -319,6 +336,7 @@ fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_cou
                 config: NodeConfig {
                     pos: next_pos,
                     size: next_size,
+                    parent: Some(node_id),
                     ..Default::default()
                 }, sub_nodes: vec![] };
 
@@ -373,8 +391,10 @@ impl eframe::App for ProteusApp {
             ui.painter().rect_filled(ctx.screen_rect(), 0.0, Color32::BLACK);
 
             let nodes: Vec<_> = self.state.nodes.clone().into_keys().collect();
-            for id in nodes {
-                draw_node(ui, id, self.time, Pos2::ZERO, &mut self.node_count, &mut self.state);
+            for id in &nodes {
+                if self.state.nodes.get(id).unwrap().config.parent.is_none() {
+                    draw_node(ui, *id, self.time, Pos2::ZERO, &mut self.node_count, &mut self.state);
+                }
             }
 
             for (start, end) in &self.state.connections {
