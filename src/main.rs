@@ -22,13 +22,12 @@ fn main() {
     assert!(engine.compile().is_ok());
     println!("{:#?}", engine);
 
-
     let native_options = eframe::NativeOptions {
         initial_window_size: Some(eframe::egui::vec2(1600., 800.)),
         ..Default::default()
     };
 
-    eframe::run_native("My egui App", native_options, Box::new(|cc| Box::new(ProteusApp::new())));
+    eframe::run_native("Proteus", native_options, Box::new(|cc| Box::new(ProteusApp::new())));
 }
 
 #[derive(Clone)]
@@ -37,6 +36,7 @@ fn main() {
 pub struct Node {
     pub id: usize,
     pub config: NodeConfig,
+    pub parent: Option<usize>,
     pub sub_nodes: Vec<NodeId>,
 }
 
@@ -46,7 +46,6 @@ pub struct Node {
 pub struct NodeConfig {
     pub pos: Pos2,
     pub size: Vec2,
-    pub parent: Option<usize>,
     pub dragged: bool,
     pub resizing: bool,
     pub last_drag_position: Option<Pos2>,
@@ -66,9 +65,22 @@ struct ProteusApp {
 
 #[derive(Debug)]
 #[derive(Default)]
+#[derive(PartialEq)]
+enum NodeSide {
+    #[default]
+    Left,
+    Right,
+    Top,
+    Bottom
+}
+
+#[derive(Debug)]
+#[derive(Default)]
 struct NodePort {
     id: usize,
     pos: Pos2,
+    side: NodeSide,
+    delta: Pos2,
     node: usize,
 }
 
@@ -113,8 +125,8 @@ fn draw_connection(ui: &mut Ui, src_pos: Pos2, dst_pos: Pos2, color: Color32) {
     let diff = dst_pos - src_pos;
     let norm_diff = diff.normalized();
     let dist = if diff.length() > 35.0 { 40.0 } else { diff.length() };
-    ui.painter().line_segment([ src_pos, dst_pos ], Stroke::new(3.0, color));
-    ui.painter().arrow(dst_pos - norm_diff * dist, norm_diff * ((dist - 5.0).max(0.0)), Stroke::new(2.0, color));
+    ui.painter().line_segment([ src_pos, dst_pos ], Stroke::new(2.0, color));
+    ui.painter().arrow(dst_pos - norm_diff * dist, norm_diff * ((dist - 5.0).max(0.0)), Stroke::new(1.0, color));
 }
 
 fn draw_link(ui: &mut Ui, src: &PortId, dst: &PortId, color: Color32, state: &EditorState) {
@@ -132,11 +144,62 @@ fn draw_link(ui: &mut Ui, src: &PortId, dst: &PortId, color: Color32, state: &Ed
 fn find_node_position(node: &Node, editor_state: &EditorState) -> Pos2 {
     let mut pos = node.config.pos;
 
-    if let Some(parent) = node.config.parent {
+    if let Some(parent) = node.parent {
         pos += find_node_position(editor_state.nodes.get(&parent).unwrap(), editor_state).to_vec2();
     }
 
     pos
+}
+
+fn find_node_side(node_id: NodeId, mouse: &Pos2, editor_state: &EditorState) -> (NodeSide, Pos2, Pos2) {
+    let node = editor_state.nodes.get(&node_id).unwrap();
+    let min = find_node_position(node, editor_state);
+    let size = node.config.size;
+    let top_dist = (mouse.y - min.y).abs();
+    let bot_dist = (mouse.y - (min.y + size.y)).abs();
+    let left_dist = (mouse.x - min.x).abs();
+    let right_dist = (mouse.x - (min.x + size.x)).abs();
+    let mut side = NodeSide::Top;
+    let mut dist = top_dist;
+
+    for (other_side, other_dist) in [ (NodeSide::Bottom, bot_dist), (NodeSide::Left, left_dist), (NodeSide::Right, right_dist) ] {
+        if other_dist < dist {
+            side = other_side;
+            dist = other_dist;
+        }
+    }
+
+    let ret_size = Pos2::from(match side {
+        NodeSide::Left => (0.0, mouse.y - min.y),
+        NodeSide::Right => (size.x, mouse.y - min.y),
+        NodeSide::Bottom => (mouse.x - min.x, size.y),
+        NodeSide::Top => (mouse.x - min.x, 0.0),
+    });
+
+    (side, min, ret_size)
+}
+
+fn get_all_subs_of_node(node_id: NodeId, editor_state: &mut EditorState) -> Vec<NodeId> {
+    let mut all_subs = vec![];
+    let mut candidates = editor_state.nodes.get(&node_id).unwrap().sub_nodes.clone();
+    while !candidates.is_empty() {
+        let next = candidates.pop().unwrap();
+        if !all_subs.contains(&next) {
+            all_subs.push(next);
+            candidates.append(&mut editor_state.nodes.get(&next).unwrap().sub_nodes.clone());
+        }
+    }
+
+    all_subs
+}
+
+fn move_all_subnodes_by(node_id: NodeId, delta: &Vec2, editor_state: &mut EditorState) {
+    let subs = get_all_subs_of_node(node_id, editor_state);
+    for (_id, port) in &mut editor_state.node_ports {
+        if subs.contains(&port.node) {
+            port.pos += *delta;
+        }
+    }
 }
 
 fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_count: &mut usize, editor_state: &mut EditorState) {
@@ -152,13 +215,15 @@ fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_cou
     };
 
     let mut response = ui.allocate_rect(rect,
-                                        egui::Sense::click_and_drag()
-                                                .union(egui::Sense::hover())
-                                                .union(egui::Sense::click()));
+    egui::Sense::click_and_drag()
+            .union(egui::Sense::hover())
+            .union(egui::Sense::click()));
 
     let internal_hover = if let Some(pointer_pos) = ui.ctx().pointer_hover_pos() {
         !config.dragged && !config.resizing &&
-            Rect::from_min_size(rect.min + Vec2::new(5.0, 27.0), rect.size() - Vec2::new(5.0, 32.0)).contains(pointer_pos)
+            Rect::from_min_size(
+                rect.min + Vec2::new(5.0, 27.0),
+                rect.size() - Vec2::new(5.0, 32.0)).contains(pointer_pos)
     } else { false };
 
     let edge_hovered = if let Some(pointer_pos) = ui.ctx().pointer_hover_pos() {
@@ -187,16 +252,17 @@ fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_cou
                             && !node_rect.shrink(5.0).contains(pointer_pos);
 
                         if edge {
-                            println!("Started connection on node #{}, ended on node #{}", start, node_id);
                             let start_rect = editor_state.node_rects.get(&start).unwrap();
                             let end_rect = editor_state.node_rects.get(node_id).unwrap();
 
                             let first_port_id = editor_state.node_ports.len();
-                            let start_port = NodePort { id: first_port_id, node: start, pos: port_pos - start_rect.min.to_vec2() };
+                            let (side1, min1, dist1) = find_node_side(start, &port_pos, editor_state);
+                            let start_port = NodePort { id: first_port_id, node: start, pos: port_pos - start_rect.min.to_vec2(), side: side1, delta: dist1 };
                             editor_state.node_ports.insert(first_port_id, start_port);
 
                             let second_port_id = editor_state.node_ports.len();
-                            let end_port = NodePort { id: second_port_id, node: *node_id, pos: pointer_pos - end_rect.min.to_vec2() };
+                            let (side2, min2, dist2) = find_node_side(*node_id, &pointer_pos, editor_state);
+                            let end_port = NodePort { id: second_port_id, node: *node_id, pos: pointer_pos - end_rect.min.to_vec2(), side: side2, delta: dist2 };
                             editor_state.node_ports.insert(second_port_id, end_port);
 
                             editor_state.connections.push((first_port_id, second_port_id));
@@ -214,6 +280,9 @@ fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_cou
             if let Some(last_drag) = config.last_drag_position {
                 let delta = latest_pos - last_drag;
                 config.pos += delta;
+
+                move_all_subnodes_by(node_id, &delta, editor_state);
+
                 config.last_drag_position = Some(latest_pos);
             } else {
                 config.last_drag_position = Some(latest_pos);
@@ -235,6 +304,14 @@ fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_cou
                 let old_size = config.size;
                 config.size += delta;
 
+                for (_id, port) in &mut editor_state.node_ports {
+                    if port.node == node_id {
+                        if port.side == NodeSide::Right || port.side == NodeSide::Bottom {
+                            port.pos += delta;
+                        }
+                    }
+                }
+
                 if config.size.x < 100.0 { config.size.x = old_size.x; }
                 if config.size.y < 50.0 { config.size.y = old_size.y; }
 
@@ -253,7 +330,9 @@ fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_cou
         }
     } else {
         let close_enough_to_resize = if let Some(pointer_pos) = ui.ctx().pointer_hover_pos() {
-            Rect::from_min_size(rect.max - Vec2::new(20.0, 20.0), Vec2::new(20.0, 20.0)).contains(pointer_pos)
+            Rect::from_min_size(
+                rect.max - Vec2::new(20.0, 20.0),
+                Vec2::new(20.0, 20.0)).contains(pointer_pos)
         } else { false };
 
         let close_enough_to_move = if let Some(pointer_pos) = ui.ctx().pointer_hover_pos() {
@@ -270,7 +349,9 @@ fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_cou
             config.resizing = close_enough_to_resize && response.drag_started_by(egui::PointerButton::Primary);
             config.dragged = false;
         } else if response.drag_started_by(egui::PointerButton::Primary) {
-            editor_state.connecting = Option::Some((node_id, response.hover_pos().unwrap()));
+            let mouse_pos = response.hover_pos().unwrap();
+            let (side, min, dist) = find_node_side(node_id, &mouse_pos, editor_state);
+            editor_state.connecting = Option::Some((node_id, min + dist.to_vec2()));
         }
     }
 
@@ -336,9 +417,10 @@ fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_cou
                 config: NodeConfig {
                     pos: next_pos,
                     size: next_size,
-                    parent: Some(node_id),
                     ..Default::default()
-                }, sub_nodes: vec![] };
+                },
+                parent: Some(node_id),
+                sub_nodes: vec![] };
 
             editor_state.nodes.insert(id, sub_node);
             editor_state.nodes.get_mut(&node_id).unwrap().sub_nodes.push(id);
@@ -361,7 +443,7 @@ fn draw_node(ui: &mut Ui, node_id: NodeId, time: f64, parent_pos: Pos2, node_cou
 }
 
 impl eframe::App for ProteusApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.delta = self.timer.mark_millis() as f64 / 1000.0;
         self.time += self.delta;
 
@@ -380,6 +462,7 @@ impl eframe::App for ProteusApp {
                             size,
                             ..Default::default()
                         },
+                        parent: None,
                         sub_nodes: vec![]
                     };
 
@@ -392,7 +475,7 @@ impl eframe::App for ProteusApp {
 
             let nodes: Vec<_> = self.state.nodes.clone().into_keys().collect();
             for id in &nodes {
-                if self.state.nodes.get(id).unwrap().config.parent.is_none() {
+                if self.state.nodes.get(id).unwrap().parent.is_none() {
                     draw_node(ui, *id, self.time, Pos2::ZERO, &mut self.node_count, &mut self.state);
                 }
             }
